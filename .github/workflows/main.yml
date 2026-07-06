@@ -1,0 +1,84 @@
+name: Build Reynard Browser
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    # Building Gecko is heavy; use the largest available macOS runner and
+    # give it plenty of time. Free-tier macos-14 runners have less RAM/CPU
+    # and may be too slow or run out of disk — a macos-14-xlarge or
+    # self-hosted runner is strongly recommended for this project.
+    runs-on: macos-14
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          repository: VibeCoderClone/reynard-browser
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /Applications/Xcode_15*.app || true
+          df -h
+
+      - name: Download Gecko and apply patches
+        run: |
+          chmod +x ./tools/development/update-gecko.sh
+          chmod +x ./tools/development/apply-patches.sh
+          ./tools/development/update-gecko.sh
+          ./tools/development/apply-patches.sh
+
+      - name: Build idevice dependency
+        run: |
+          chmod +x ./tools/development/build-idevice.sh
+          ./tools/development/build-idevice.sh
+
+      - name: Build Gecko engine
+        run: |
+          chmod +x ./tools/development/build-gecko.sh
+          ./tools/development/build-gecko.sh
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: List available schemes (debug helper)
+        run: xcodebuild -list -project Reynard.xcodeproj
+
+      - name: Build Reynard.xcodeproj
+        run: |
+          xcodebuild \
+            -project Reynard.xcodeproj \
+            -scheme Reynard \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Upload build products
+        uses: actions/upload-artifact@v4
+        with:
+          name: reynard-build
+          path: |
+            build/**/*.app
+            build/**/*.ipa
+          if-no-files-found: warn
